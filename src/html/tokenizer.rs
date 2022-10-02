@@ -1,31 +1,41 @@
 use crate::html::position::Position;
+use crate::html::tokenizer::TokenKind::{Eof,  Text, Whitespace};
 use std::str::Chars;
-use crate::html::tokenizer::TokenKind::{Decimal, Eof, Integer, ReservedSymbol, Text, Whitespace};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Illegal,
     Eof,
     Whitespace,
 
-    ReservedSymbol(String),
-    Text(String),
+    TagBegin,
+    TagEnd,
+    Excl,
+    Assign,
+    Hyphen,
+    Slash,
+    Amp,
 
-    String(String),
-    Integer(i64),
-    Decimal(f64),
+    String,
+    Text
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    kind: TokenKind,
-    pos: Position,
-    next: Option<Box<Token>>,
+    pub kind: TokenKind,
+    pub pos: Position,
+    pub s: String,
+    pub next: Option<Box<Token>>,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, pos: Position) -> Token {
-        return Token { kind, pos, next: None };
+    pub fn new(kind: TokenKind, pos: Position, s: String) -> Token {
+        return Token {
+            kind,
+            pos,
+            s,
+            next: None,
+        };
     }
 }
 
@@ -58,6 +68,19 @@ fn is_reserved_symbol(c: char) -> bool {
         }
     }
     return false;
+}
+
+fn str_to_symbol_kind(s: String) -> TokenKind {
+    return match s.as_str() {
+        "<" => TokenKind::TagBegin,
+        ">" => TokenKind::TagEnd,
+        "!" => TokenKind::Excl,
+        "=" => TokenKind::Assign,
+        "-" => TokenKind::Hyphen,
+        "/" => TokenKind::Slash,
+        "&" => TokenKind::Amp,
+        _ => TokenKind::Illegal
+    }
 }
 
 pub struct Tokenizer {
@@ -199,50 +222,53 @@ impl Tokenizer {
     }
 
     fn link_ws_token<'a>(&self, cur: &'a mut Token, pos: Position) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(Whitespace, pos);
+        let tok: Token = Token::new(Whitespace, pos, "".to_string());
         cur.next = Some(Box::from(tok.clone()));
         return cur.next.as_mut().unwrap();
     }
 
-    fn link_symbol_token<'a>(&self, cur: &'a mut Token, pos: Position, symbol: String) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(ReservedSymbol(symbol), pos);
+    fn link_symbol_token<'a>(
+        &self,
+        cur: &'a mut Token,
+        pos: Position,
+        symbol: String,
+    ) -> &'a mut Box<Token> {
+        let tok: Token = Token::new(str_to_symbol_kind(symbol), pos, "".to_string());
         cur.next = Some(Box::from(tok.clone()));
         return cur.next.as_mut().unwrap();
     }
 
-    fn link_decimal_token<'a>(&self, cur: &'a mut Token, pos: Position, f: f64) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(Decimal(f), pos);
+    fn link_string_token<'a>(
+        &self,
+        cur: &'a mut Token,
+        pos: Position,
+        s: String,
+    ) -> &'a mut Box<Token> {
+        let tok: Token = Token::new(TokenKind::String, pos, s);
         cur.next = Some(Box::from(tok.clone()));
         return cur.next.as_mut().unwrap();
     }
 
-    fn link_integer_token<'a>(&self, cur: &'a mut Token, pos: Position, i: i64) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(Integer(i), pos);
-        cur.next = Some(Box::from(tok.clone()));
-        return cur.next.as_mut().unwrap();
-    }
-
-    fn link_string_token<'a>(&self, cur: &'a mut Token, pos: Position, s: String) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(TokenKind::String(s), pos);
-        cur.next = Some(Box::from(tok.clone()));
-        return cur.next.as_mut().unwrap();
-    }
-
-    fn link_text_token<'a>(&self, cur: &'a mut Token, pos: Position, s: String) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(Text(s), pos);
+    fn link_text_token<'a>(
+        &self,
+        cur: &'a mut Token,
+        pos: Position,
+        s: String,
+    ) -> &'a mut Box<Token> {
+        let tok: Token = Token::new(Text, pos, s);
         cur.next = Some(Box::from(tok.clone()));
         return cur.next.as_mut().unwrap();
     }
 
     fn link_eof_token<'a>(&self, cur: &'a mut Token, pos: Position) -> &'a mut Box<Token> {
-        let tok: Token = Token::new(Eof, pos);
+        let tok: Token = Token::new(Eof, pos, "".to_string());
         cur.next = Some(Box::from(tok.clone()));
         return cur.next.as_mut().unwrap();
     }
 
-    fn tokenize(&mut self) -> Option<Box<Token>> {
-        let mut head = Token::new(TokenKind::Illegal, self.pos.clone());
-        let mut cur= &mut head;
+    pub(crate) fn tokenize(&mut self) -> Option<Box<Token>> {
+        let mut head = Token::new(TokenKind::Illegal, self.pos.clone(), "".to_string());
+        let mut cur = &mut head;
 
         while !self.is_eof() {
             if is_ws(self.current_char()) {
@@ -260,20 +286,10 @@ impl Tokenizer {
             if self.current_char() == '\'' {
                 let s = self.consume_string(true);
                 cur = self.link_string_token(cur, self.pos.clone(), s);
-                continue
+                continue;
             } else if self.current_char() == '"' {
                 let s = self.consume_string(false);
                 cur = self.link_string_token(cur, self.pos.clone(), s);
-                continue
-            }
-
-            if is_number(self.current_char()) {
-                let (f, include_dot) = self.consume_numeric();
-                if include_dot {
-                    cur = self.link_decimal_token(cur, self.pos.clone(), f);
-                } else {
-                    cur = self.link_integer_token(cur, self.pos.clone(), f as i64);
-                }
                 continue;
             }
 
